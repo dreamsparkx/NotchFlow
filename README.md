@@ -1,6 +1,6 @@
 # NotchFlow
 
-Minimal first version of a native macOS notch app.
+A native macOS notch app built with AppKit and Combine.
 
 ## Current behavior
 
@@ -12,11 +12,37 @@ Minimal first version of a native macOS notch app.
 - Hovering the artwork or waveform reveals the centered track and artist name and replaces the waveform with a working pause button.
 - Paused tracks remain visible; the waveform freezes and the control changes to play.
 - Clicking the music surface opens a full player with large artwork, metadata, progress, seeking, and playback controls.
-- Clicking the playlist button widens the player and reveals an animated Playing Next panel (Apple Music exposes upcoming playlist tracks; Spotify does not expose its queue through its macOS scripting API).
+- The full player includes a shuffle control that stays highlighted while shuffle is enabled in Music.app or Spotify.
 - The AirPlay button opens a native menu of available audio outputs and switches the system output device.
 - Brightness keys temporarily morph the notch into a compact Display HUD with a live yellow level bar and percentage.
 - Volume and mute keys use the same compact HUD with a speaker icon and macOS green level bar.
 - Does not include clipboard or other productivity features yet.
+
+## Project structure
+
+```text
+Sources/NotchFlow/
+├── App/                 App lifecycle and launch setup
+├── Controllers/         Generic notch window ownership and event routing
+├── Models/              Shared notch presentation state
+├── NotchApps/
+│   ├── NotchApp.swift   Contract implemented by every notch feature
+│   └── Music/           Music model, view, controls, waveform, and audio output
+├── Services/            Hardware keys, display brightness, and system audio
+└── Views/               Shared views such as the system HUD
+```
+
+Brightness and volume intentionally share `SystemHUDView` because they have the same layout and animation. Their behavior is separate: `DisplayBrightnessService.swift` handles display brightness, while `SystemAudioService.swift` handles volume and mute.
+
+## Notch app architecture
+
+`NotchWindowController` is only the host: it owns the panel, screen sizing, hover routing, outside-click handling, and hardware HUD events. It does not own music state or music controls.
+
+Each feature conforms to `NotchApp`, owns its model, and returns a `NotchAppView`. Music is the first implementation in `NotchApps/Music`. Future clipboard, timer, or notification features can live in their own folders and implement the same boundary without adding feature code to the window controller.
+
+## Playback architecture
+
+The music notch app observes and controls Music.app or Spotify through their macOS scripting interfaces. Current metadata, transport controls, seeking, shuffle state, and audio-output selection are contained inside the music module. The Playing Next feature has been removed because neither application exposes its live queue through a reliable public macOS API.
 
 ## Run in Xcode
 
@@ -28,12 +54,6 @@ Minimal first version of a native macOS notch app.
 
 ```sh
 open /Users/dreamsparkx/Projects/NotchFlow/NotchFlow.xcodeproj
-```
-
-The current locally signed build can also be launched directly:
-
-```sh
-open /Users/dreamsparkx/Projects/NotchFlow/dist/NotchFlow.app
 ```
 
 The App Sandbox is intentionally disabled because the app reads now-playing data from other applications and handles the brightness hardware keys. Accessibility permission is required to intercept those keys and suppress the standard macOS brightness HUD; Input Monitoring provides the observation-only fallback.

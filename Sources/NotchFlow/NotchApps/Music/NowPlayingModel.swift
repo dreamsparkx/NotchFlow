@@ -1,15 +1,9 @@
 import AppKit
 import Combine
 
-struct QueuedTrack {
-    let id: String
-    let title: String
-    let artist: String
-    let artwork: NSImage?
-}
-
 final class NowPlayingModel: ObservableObject {
     @Published private(set) var isPlaying = false
+    @Published private(set) var isShuffleEnabled = false
     @Published private(set) var hasTrack = false
     @Published private(set) var artwork: NSImage?
     @Published private(set) var accentColor = NSColor(calibratedRed: 0.38, green: 0.55, blue: 1, alpha: 1)
@@ -17,14 +11,15 @@ final class NowPlayingModel: ObservableObject {
     @Published private(set) var artist = ""
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
-    @Published private(set) var queueTracks: [QueuedTrack] = []
-    @Published private(set) var queueMessage = ""
 
     private let pollingQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.now-playing", qos: .utility)
+    private let commandQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.commands", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var currentArtworkKey: String?
     private var pendingArtworkKey: String?
     private var activePlayer: Player?
+    private var pendingShuffleState: Bool?
+    private var isStartingDefaultPlayer = false
 
     private enum Player: String {
         case spotify = "Spotify"
@@ -74,6 +69,7 @@ final class NowPlayingModel: ObservableObject {
 
     private func clearPlayback() {
         isPlaying = false
+        isShuffleEnabled = false
         hasTrack = false
         artwork = nil
         accentColor = Self.fallbackAccent
@@ -87,9 +83,53 @@ final class NowPlayingModel: ObservableObject {
     }
 
     func togglePlayback() {
-        guard let activePlayer else { return }
+        guard !isStartingDefaultPlayer else { return }
+        guard let activePlayer else {
+            startAppleMusicPlayback()
+            return
+        }
         isPlaying.toggle()
         runCommand("tell application \"\(activePlayer.rawValue)\" to playpause")
+    }
+
+    private func startAppleMusicPlayback() {
+        isStartingDefaultPlayer = true
+        activePlayer = .music
+        isPlaying = true
+
+        commandQueue.async { [weak self] in
+            // Music accepts the launch event before its playback controller is
+            // ready. Wait for that controller, then use the same `playpause`
+            // command that succeeds on a user's second click. Checking state
+            // first makes the retries idempotent.
+            var error: NSDictionary?
+            _ = NSAppleScript(source: "tell application \"Music\" to launch")?
+                .executeAndReturnError(&error)
+
+            Thread.sleep(forTimeInterval: 0.75)
+            let playbackStarted = self?.resumeMusicIfNeeded() ?? false
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isStartingDefaultPlayer = false
+                if error != nil || !playbackStarted {
+                    self.isPlaying = false
+                }
+                self.refreshAsync()
+            }
+        }
+    }
+
+    private func resumeMusicIfNeeded() -> Bool {
+        let stateSource = "tell application \"Music\" to get player state as text"
+        if runScript(stateSource)?.stringValue == "playing" {
+            return true
+        }
+
+        var error: NSDictionary?
+        _ = NSAppleScript(source: "tell application \"Music\" to playpause")?
+            .executeAndReturnError(&error)
+        return error == nil
     }
 
     func previousTrack() {
@@ -102,6 +142,36 @@ final class NowPlayingModel: ObservableObject {
         runCommand("tell application \"\(activePlayer.rawValue)\" to next track", refreshAfter: true)
     }
 
+    func toggleShuffle() {
+        guard let activePlayer else { return }
+        let nextValue = !isShuffleEnabled
+        pendingShuffleState = nextValue
+        isShuffleEnabled = nextValue
+        let property = activePlayer == .music ? "shuffle enabled" : "shuffling"
+        let source = "tell application \"\(activePlayer.rawValue)\" to set \(property) to \(nextValue)"
+        commandQueue.async { [weak self] in
+            var error: NSDictionary?
+            _ = NSAppleScript(source: source)?.executeAndReturnError(&error)
+            DispatchQueue.main.async {
+                guard let self, self.pendingShuffleState == nextValue else { return }
+                if error != nil {
+                    self.pendingShuffleState = nil
+                    self.isShuffleEnabled = !nextValue
+                    return
+                }
+                // Keep the optimistic state locked until a fresh player poll
+                // confirms it. An older in-flight poll must not flash the
+                // previous state back onto the button.
+                self.refreshAsync()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, self.pendingShuffleState == nextValue else { return }
+                    self.pendingShuffleState = nil
+                    self.refreshAsync()
+                }
+            }
+        }
+    }
+
     func seek(to seconds: Double) {
         guard let activePlayer, duration > 0 else { return }
         let clamped = min(duration, max(0, seconds))
@@ -109,51 +179,26 @@ final class NowPlayingModel: ObservableObject {
         runCommand("tell application \"\(activePlayer.rawValue)\" to set player position to \(clamped)")
     }
 
-    func refreshQueue() {
-        let player = activePlayer
-        queueMessage = "Loading…"
-        pollingQueue.async { [weak self] in
-            guard let self else { return }
-            switch player {
-            case .music:
-                let tracks = self.musicQueue()
-                DispatchQueue.main.async {
-                    self.queueTracks = tracks
-                    self.queueMessage = tracks.isEmpty ? "Nothing else is queued" : ""
-                }
-            case .spotify:
-                DispatchQueue.main.async {
-                    self.queueTracks = []
-                    self.queueMessage = "Spotify does not expose Playing Next"
-                }
-            case nil:
-                DispatchQueue.main.async {
-                    self.queueTracks = []
-                    self.queueMessage = "Nothing is playing"
-                }
-            }
-        }
-    }
-
     private func isRunning(_ bundleIdentifier: String) -> Bool {
         NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleIdentifier }
     }
 
-    private func spotifyState() -> (isPlaying: Bool, key: String, title: String, artist: String, artworkURL: String, elapsed: Double, duration: Double)? {
+    private func spotifyState() -> (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, artworkURL: String, elapsed: Double, duration: Double)? {
         let source = """
         tell application "Spotify"
             set currentSong to current track
-            return (player state as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (artwork url of currentSong) & "|||" & (player position as text) & "|||" & ((duration of currentSong) / 1000 as text)
+            return (player state as text) & "|||" & (shuffling as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (artwork url of currentSong) & "|||" & (player position as text) & "|||" & ((duration of currentSong) / 1000 as text)
         end tell
         """
         guard let result = runScript(source)?.stringValue else { return nil }
         let parts = result.components(separatedBy: "|||")
-        guard parts.count == 7 else { return nil }
-        return (parts[0] == "playing", parts[1...3].joined(separator: "|"), parts[1], parts[2], parts[4], Double(parts[5]) ?? 0, Double(parts[6]) ?? 0)
+        guard parts.count == 8 else { return nil }
+        return (parts[0] == "playing", parts[1] == "true", parts[2...4].joined(separator: "|"), parts[2], parts[3], parts[5], Double(parts[6]) ?? 0, Double(parts[7]) ?? 0)
     }
 
-    private func applySpotify(_ state: (isPlaying: Bool, key: String, title: String, artist: String, artworkURL: String, elapsed: Double, duration: Double)) {
+    private func applySpotify(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, artworkURL: String, elapsed: Double, duration: Double)) {
         isPlaying = state.isPlaying
+        applyShuffleState(state.isShuffleEnabled)
         hasTrack = true
         activePlayer = .spotify
         title = state.title
@@ -188,64 +233,22 @@ final class NowPlayingModel: ObservableObject {
         }.resume()
     }
 
-    private func musicState() -> (isPlaying: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)? {
+    private func musicState() -> (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)? {
         let source = """
         tell application "Music"
             set currentSong to current track
-            return (player state as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (player position as text) & "|||" & (duration of currentSong as text)
+            return (player state as text) & "|||" & (shuffle enabled as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (player position as text) & "|||" & (duration of currentSong as text)
         end tell
         """
         guard let result = runScript(source)?.stringValue else { return nil }
         let parts = result.components(separatedBy: "|||")
-        guard parts.count == 6 else { return nil }
-        return (parts[0] == "playing", parts[1...3].joined(separator: "|"), parts[1], parts[2], Double(parts[4]) ?? 0, Double(parts[5]) ?? 0)
+        guard parts.count == 7 else { return nil }
+        return (parts[0] == "playing", parts[1] == "true", parts[2...4].joined(separator: "|"), parts[2], parts[3], Double(parts[5]) ?? 0, Double(parts[6]) ?? 0)
     }
 
-    private func musicQueue() -> [QueuedTrack] {
-        let source = """
-        tell application "Music"
-            set fieldSeparator to ASCII character 31
-            set rowSeparator to ASCII character 30
-            set activePlaylist to current playlist
-            set playlistTracks to every track of activePlaylist
-            set currentName to name of current track
-            set currentArtist to artist of current track
-            set currentIndex to 0
-            repeat with candidateIndex from 1 to (count of playlistTracks)
-                set candidateTrack to item candidateIndex of playlistTracks
-                try
-                    if (name of candidateTrack is currentName) and (artist of candidateTrack is currentArtist) then
-                        set currentIndex to candidateIndex
-                        exit repeat
-                    end if
-                end try
-            end repeat
-            if currentIndex is 0 then return ""
-            set finalIndex to currentIndex + 3
-            set trackTotal to count of playlistTracks
-            if finalIndex > trackTotal then set finalIndex to trackTotal
-            if currentIndex is greater than or equal to finalIndex then return ""
-            set outputText to ""
-            repeat with trackIndex from (currentIndex + 1) to finalIndex
-                set queuedTrack to item trackIndex of playlistTracks
-                set outputText to outputText & (trackIndex as text) & fieldSeparator & (name of queuedTrack) & fieldSeparator & (artist of queuedTrack)
-                if trackIndex < finalIndex then set outputText to outputText & rowSeparator
-            end repeat
-            return outputText
-        end tell
-        """
-        guard let result = runScript(source)?.stringValue, !result.isEmpty else { return [] }
-        return result.components(separatedBy: "\u{1E}").compactMap { row in
-            let fields = row.components(separatedBy: "\u{1F}")
-            guard fields.count == 3, let index = Int(fields[0]) else { return nil }
-            let artworkSource = "tell application \"Music\" to get data of artwork 1 of track \(index) of current playlist"
-            let artwork = runScript(artworkSource).flatMap { NSImage(data: $0.data) }
-            return QueuedTrack(id: "music-\(index)-\(fields[1])", title: fields[1], artist: fields[2], artwork: artwork)
-        }
-    }
-
-    private func applyMusic(_ state: (isPlaying: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)) {
+    private func applyMusic(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)) {
         isPlaying = state.isPlaying
+        applyShuffleState(state.isShuffleEnabled)
         hasTrack = true
         activePlayer = .music
         title = state.title
@@ -275,6 +278,17 @@ final class NowPlayingModel: ObservableObject {
             NSLog("NotchFlow Music scripting error: %@", error)
         }
         return error == nil ? result : nil
+    }
+
+    private func applyShuffleState(_ reportedValue: Bool) {
+        if let pendingShuffleState {
+            isShuffleEnabled = pendingShuffleState
+            if reportedValue == pendingShuffleState {
+                self.pendingShuffleState = nil
+            }
+        } else {
+            isShuffleEnabled = reportedValue
+        }
     }
 
     private func runCommand(_ source: String, refreshAfter: Bool = false) {

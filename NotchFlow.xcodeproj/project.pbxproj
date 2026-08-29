@@ -1,0 +1,121 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* NotchFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* NotchFlowApp.swift */; };
+		B10000000000000000000002 /* NotchWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* NotchWindowController.swift */; };
+		B10000000000000000000004 /* NowPlayingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* NowPlayingModel.swift */; };
+		B10000000000000000000005 /* BrightnessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* BrightnessMonitor.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B20000000000000000000001 /* NotchFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchFlowApp.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* NotchWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchWindowController.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 /* NowPlayingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingModel.swift; sourceTree = "<group>"; };
+		B20000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B20000000000000000000006 /* NotchFlow.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotchFlow.entitlements; sourceTree = "<group>"; };
+		B20000000000000000000007 /* NotchFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotchFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000008 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		B20000000000000000000009 /* BrightnessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrightnessMonitor.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B30000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (B40000000000000000000002 /* NotchFlow */, B40000000000000000000003 /* Configuration */, B40000000000000000000004 /* Products */, B20000000000000000000008 /* README.md */);
+			sourceTree = "<group>";
+		};
+		B40000000000000000000002 /* NotchFlow */ = {
+			isa = PBXGroup;
+			children = (B20000000000000000000001, B20000000000000000000002, B20000000000000000000004, B20000000000000000000009);
+			path = Sources/NotchFlow;
+			sourceTree = "<group>";
+		};
+		B40000000000000000000003 /* Configuration */ = {
+			isa = PBXGroup;
+			children = (B20000000000000000000005 /* Info.plist */, B20000000000000000000006 /* NotchFlow.entitlements */);
+			name = Configuration;
+			sourceTree = "<group>";
+		};
+		B40000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (B20000000000000000000007 /* NotchFlow.app */);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B50000000000000000000001 /* NotchFlow */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B60000000000000000000002;
+			buildPhases = (B30000000000000000000002 /* Sources */, B30000000000000000000001 /* Frameworks */, B30000000000000000000003 /* Resources */);
+			buildRules = ();
+			dependencies = ();
+			name = NotchFlow;
+			productName = NotchFlow;
+			productReference = B20000000000000000000007 /* NotchFlow.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B50000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {B50000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; }; };
+			buildConfigurationList = B60000000000000000000001;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = B40000000000000000000001;
+			productRefGroup = B40000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (B50000000000000000000001 /* NotchFlow */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B30000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B30000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000004, B10000000000000000000005);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B70000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; MACOSX_DEPLOYMENT_TARGET = 14.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		B70000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; COPY_PHASE_STRIP = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; }; name = Release; };
+		B70000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {CODE_SIGN_ENTITLEMENTS = NotchFlow.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.dreamsparkx.NotchFlow; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; };
+			name = Debug;
+		};
+		B70000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {CODE_SIGN_ENTITLEMENTS = NotchFlow.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; ENABLE_APP_SANDBOX = NO; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.dreamsparkx.NotchFlow; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 5.0; };
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B60000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B70000000000000000000001, B70000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		B60000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B70000000000000000000003, B70000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = B50000000000000000000002 /* Project object */;
+}

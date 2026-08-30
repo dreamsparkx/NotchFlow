@@ -39,7 +39,7 @@ private struct PermissionSetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 PermissionFlowButton(
                     title: "Accessibility",
                     pane: .accessibility,

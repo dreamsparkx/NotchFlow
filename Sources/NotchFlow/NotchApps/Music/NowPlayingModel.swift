@@ -1,5 +1,20 @@
 import AppKit
 import Combine
+import Darwin
+
+enum PlaybackQuality: Equatable {
+    case dolbyAtmos
+    case hiResLossless
+    case lossless
+
+    var badgeText: String {
+        switch self {
+        case .dolbyAtmos: return "◖◗ ATMOS"
+        case .hiResLossless: return "HI-RES LOSSLESS"
+        case .lossless: return "LOSSLESS"
+        }
+    }
+}
 
 final class NowPlayingModel: ObservableObject {
     @Published private(set) var isPlaying = false
@@ -11,6 +26,7 @@ final class NowPlayingModel: ObservableObject {
     @Published private(set) var artist = ""
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
+    @Published private(set) var playbackQuality: PlaybackQuality?
 
     private let pollingQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.now-playing", qos: .utility)
     private let commandQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.commands", qos: .userInitiated)
@@ -20,6 +36,7 @@ final class NowPlayingModel: ObservableObject {
     private var activePlayer: Player?
     private var pendingShuffleState: Bool?
     private var isStartingDefaultPlayer = false
+    private let systemPlaybackQuality = SystemPlaybackQualityProvider()
 
     private enum Player: String {
         case spotify = "Spotify"
@@ -77,6 +94,7 @@ final class NowPlayingModel: ObservableObject {
         artist = ""
         elapsed = 0
         duration = 0
+        playbackQuality = nil
         activePlayer = nil
         currentArtworkKey = nil
         pendingArtworkKey = nil
@@ -205,6 +223,7 @@ final class NowPlayingModel: ObservableObject {
         artist = state.artist
         elapsed = state.elapsed
         duration = state.duration
+        playbackQuality = nil
         guard currentArtworkKey != state.key, pendingArtworkKey != state.key else { return }
         pendingArtworkKey = state.key
         artwork = nil
@@ -233,20 +252,33 @@ final class NowPlayingModel: ObservableObject {
         }.resume()
     }
 
-    private func musicState() -> (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)? {
+    private func musicState() -> (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double, quality: PlaybackQuality?)? {
         let source = """
         tell application "Music"
             set currentSong to current track
-            return (player state as text) & "|||" & (shuffle enabled as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (player position as text) & "|||" & (duration of currentSong as text)
+            set trackKind to ""
+            set trackBitRate to "0"
+            set trackSampleRate to "0"
+            try
+                set trackKind to kind of currentSong as text
+                set trackBitRate to bit rate of currentSong as text
+                set trackSampleRate to sample rate of currentSong as text
+            end try
+            return (player state as text) & "|||" & (shuffle enabled as text) & "|||" & (name of currentSong) & "|||" & (artist of currentSong) & "|||" & (album of currentSong) & "|||" & (player position as text) & "|||" & (duration of currentSong as text) & "|||" & trackKind & "|||" & trackBitRate & "|||" & trackSampleRate
         end tell
         """
         guard let result = runScript(source)?.stringValue else { return nil }
         let parts = result.components(separatedBy: "|||")
-        guard parts.count == 7 else { return nil }
-        return (parts[0] == "playing", parts[1] == "true", parts[2...4].joined(separator: "|"), parts[2], parts[3], Double(parts[5]) ?? 0, Double(parts[6]) ?? 0)
+        guard parts.count == 10 else { return nil }
+        let quality = Self.playbackQuality(
+            kind: parts[7],
+            bitRate: Int(parts[8]) ?? 0,
+            sampleRate: Int(parts[9]) ?? 0
+        )
+        return (parts[0] == "playing", parts[1] == "true", parts[2...4].joined(separator: "|"), parts[2], parts[3], Double(parts[5]) ?? 0, Double(parts[6]) ?? 0, quality)
     }
 
-    private func applyMusic(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double)) {
+    private func applyMusic(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double, quality: PlaybackQuality?)) {
         isPlaying = state.isPlaying
         applyShuffleState(state.isShuffleEnabled)
         hasTrack = true
@@ -255,6 +287,9 @@ final class NowPlayingModel: ObservableObject {
         artist = state.artist
         elapsed = state.elapsed
         duration = state.duration
+        // The track's file kind can say Lossless while Music is actively
+        // rendering its Dolby Atmos variant. Prefer the live output format.
+        playbackQuality = systemPlaybackQuality.currentQuality() ?? state.quality
         guard currentArtworkKey != state.key else { return }
 
         let source = "tell application \"Music\" to get data of artwork 1 of current track"
@@ -289,6 +324,17 @@ final class NowPlayingModel: ObservableObject {
         } else {
             isShuffleEnabled = reportedValue
         }
+    }
+
+    private static func playbackQuality(kind: String, bitRate: Int, sampleRate: Int) -> PlaybackQuality? {
+        let normalizedKind = kind.lowercased()
+        if normalizedKind.contains("dolby atmos") || normalizedKind.contains("spatial audio") {
+            return .dolbyAtmos
+        }
+
+        let explicitlyLossless = normalizedKind.contains("lossless") || normalizedKind.contains("alac")
+        guard explicitlyLossless || bitRate >= 600 else { return nil }
+        return sampleRate > 48_000 ? .hiResLossless : .lossless
     }
 
     private func runCommand(_ source: String, refreshAfter: Bool = false) {
@@ -366,5 +412,60 @@ final class NowPlayingModel: ObservableObject {
             brightness: max(0.76, brightness),
             alpha: 1
         )
+    }
+}
+
+/// Reads macOS's live now-playing audio format when it is available. This is
+/// intentionally optional: older systems simply fall back to Music's track
+/// kind, bitrate, and sample-rate metadata.
+private final class SystemPlaybackQualityProvider {
+    private let controller: NSObject?
+
+    init() {
+        let framework = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
+        guard dlopen(framework, RTLD_LAZY) != nil,
+              let controllerType = NSClassFromString("MRNowPlayingAudioFormatController") as? NSObject.Type else {
+            controller = nil
+            return
+        }
+        controller = controllerType.init()
+    }
+
+    func currentQuality() -> PlaybackQuality? {
+        guard let info = controller?.value(forKey: "audioFormatContentInfo") as? NSObject else {
+            return nil
+        }
+
+        let description = [
+            info.value(forKey: "audioFormatDescription") as? String,
+            info.value(forKey: "bestAvailableAudioFormatDescription") as? String,
+            String(describing: info)
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
+
+        let isSpatialized = (info.value(forKey: "isSpatialized") as? NSNumber)?.boolValue ?? false
+        let isMultichannel = (info.value(forKey: "isMultichannel") as? NSNumber)?.boolValue ?? false
+        if description.contains("dolby atmos")
+            || description.contains("atmos")
+            || (isSpatialized && isMultichannel) {
+            return .dolbyAtmos
+        }
+
+        let format = info.value(forKey: "audioFormat") as? NSObject
+        let sampleRate = (format?.value(forKey: "sampleRate") as? NSNumber)?.intValue ?? 0
+        let bitRate = (format?.value(forKey: "bitrate") as? NSNumber)?.intValue ?? 0
+        let bitDepth = (format?.value(forKey: "bitDepth") as? NSNumber)?.intValue ?? 0
+        let formatDescription = [description, format.map(String.init(describing:))]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+        let isLossless = formatDescription.contains("lossless")
+            || formatDescription.contains("alac")
+            || bitRate >= 600
+            || bitDepth >= 16
+        guard isLossless else { return nil }
+        return sampleRate > 48_000 || bitDepth > 24 ? .hiResLossless : .lossless
     }
 }

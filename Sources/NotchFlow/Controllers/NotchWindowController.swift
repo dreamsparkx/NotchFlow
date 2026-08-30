@@ -113,7 +113,7 @@ final class NotchWindowController: NSWindowController {
             measuredHeight = max(measuredHeight, max(left.height, right.height))
             let hardwareNotchWidth = max(180, right.minX - left.maxX)
             presentation.hardwareNotchWidth = hardwareNotchWidth
-            presentation.compactWidth = min(360, hardwareNotchWidth + 124)
+            presentation.compactWidth = min(334, hardwareNotchWidth + 98)
         } else {
             presentation.hardwareNotchWidth = 186
             presentation.compactWidth = 310
@@ -147,7 +147,9 @@ final class NotchWindowController: NSWindowController {
 
     private func resizeWindow(forApp isOpen: Bool) {
         guard let panel = window, let screen = panel.screen ?? NSScreen.main else { return }
-        let size = isOpen ? NSSize(width: 620, height: 195) : NSSize(width: 620, height: 90)
+        let size = isOpen
+            ? NSSize(width: presentation.openAppWidth + 100, height: presentation.openAppHeight + 30)
+            : NSSize(width: 620, height: 90)
         let frame = NSRect(
             x: screen.frame.midX - size.width / 2,
             y: screen.frame.maxY - size.height,

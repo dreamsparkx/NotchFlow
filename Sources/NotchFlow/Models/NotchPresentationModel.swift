@@ -10,6 +10,7 @@ final class NotchPresentationModel: ObservableObject {
     @Published private(set) var isExpanded = false
     @Published private(set) var expansionProgress: CGFloat = 0
     @Published private(set) var showsPrimaryDetails = false
+    @Published private(set) var primaryDetailsProgress: CGFloat = 0
     @Published private(set) var isAppOpen = false
     @Published private(set) var appOpenProgress: CGFloat = 0
     @Published private(set) var systemHUDProgress: CGFloat = 0
@@ -21,18 +22,21 @@ final class NotchPresentationModel: ObservableObject {
     @Published var hardwareNotchWidth: CGFloat = 186
 
     private var animationTimer: Timer?
+    private var primaryDetailsAnimationTimer: Timer?
     private var appOpenAnimationTimer: Timer?
     private var systemHUDAnimationTimer: Timer?
     private var systemHUDHideWorkItem: DispatchWorkItem?
 
-    var expandedWidth: CGFloat { compactWidth + 72 }
-    var expandedHeight: CGFloat { compactHeight + 18 }
-    let openAppWidth: CGFloat = 520
-    let openAppHeight: CGFloat = 165
+    var expandedWidth: CGFloat { compactWidth + 36 }
+    var expandedHeight: CGFloat { compactHeight + 4 }
+    let openAppWidth: CGFloat = 382
+    let openAppHeight: CGFloat = 209
     var systemHUDWidth: CGFloat { min(600, max(560, hardwareNotchWidth + 380)) }
     var systemHUDHeight: CGFloat { compactHeight }
     var hoverWidth: CGFloat { interpolate(compactWidth, expandedWidth) }
-    var hoverHeight: CGFloat { interpolate(compactHeight, expandedHeight) }
+    var hoverHeight: CGFloat {
+        interpolate(compactHeight, expandedHeight) + 20 * primaryDetailsProgress
+    }
     private var appWidth: CGFloat { hoverWidth + (openAppWidth - hoverWidth) * appOpenProgress }
     private var appHeight: CGFloat { hoverHeight + (openAppHeight - hoverHeight) * appOpenProgress }
     var currentWidth: CGFloat { appWidth + (systemHUDWidth - appWidth) * systemHUDProgress }
@@ -41,6 +45,7 @@ final class NotchPresentationModel: ObservableObject {
 
     deinit {
         animationTimer?.invalidate()
+        primaryDetailsAnimationTimer?.invalidate()
         appOpenAnimationTimer?.invalidate()
         systemHUDAnimationTimer?.invalidate()
         systemHUDHideWorkItem?.cancel()
@@ -78,6 +83,27 @@ final class NotchPresentationModel: ObservableObject {
     func setPrimaryDetailsVisible(_ visible: Bool) {
         guard visible != showsPrimaryDetails else { return }
         showsPrimaryDetails = visible
+        primaryDetailsAnimationTimer?.invalidate()
+
+        let start = primaryDetailsProgress
+        let target: CGFloat = visible ? 1 : 0
+        let distance = abs(target - start)
+        let duration = max(0.06, 0.12 * Double(distance))
+        let startedAt = Date.timeIntervalSinceReferenceDate
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let elapsed = Date.timeIntervalSinceReferenceDate - startedAt
+            let linear = min(1, elapsed / duration)
+            let eased = linear * linear * (3 - 2 * linear)
+            self.primaryDetailsProgress = start + (target - start) * CGFloat(eased)
+            if linear >= 1 {
+                self.primaryDetailsProgress = target
+                timer.invalidate()
+                self.primaryDetailsAnimationTimer = nil
+            }
+        }
+        primaryDetailsAnimationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func setAppOpen(_ open: Bool) {
@@ -88,6 +114,9 @@ final class NotchPresentationModel: ObservableObject {
         expansionProgress = open ? 1 : 0
         isExpanded = open
         showsPrimaryDetails = false
+        primaryDetailsAnimationTimer?.invalidate()
+        primaryDetailsAnimationTimer = nil
+        primaryDetailsProgress = 0
         isAppOpen = open
 
         let start = appOpenProgress

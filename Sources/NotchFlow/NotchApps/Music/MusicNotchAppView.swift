@@ -13,6 +13,7 @@ final class MusicNotchAppView: NotchAppView {
     private let pauseButton = PlayerControlButton()
     private let fullTitleLabel = NSTextField(labelWithString: "")
     private let artistLabel = NSTextField(labelWithString: "")
+    private let qualityBadgeLabel = NSTextField(labelWithString: "")
     private let elapsedLabel = NSTextField(labelWithString: "0:00")
     private let remainingLabel = NSTextField(labelWithString: "-0:00")
     private let progressSlider = ResponsiveSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
@@ -77,7 +78,7 @@ final class MusicNotchAppView: NotchAppView {
                 let symbol = isPlaying ? "pause.fill" : "play.fill"
                 let description = isPlaying ? "Pause" : "Play"
                 self?.pauseButton.image = self?.configuredSymbol(symbol, description: description, pointSize: 13)
-                self?.fullPlayPauseButton.image = self?.configuredSymbol(symbol, description: description, pointSize: 20)
+                self?.fullPlayPauseButton.image = self?.configuredSymbol(symbol, description: description, pointSize: 24)
                 self?.waveformView.isAnimating = isPlaying
             }
             .store(in: &cancellables)
@@ -103,10 +104,32 @@ final class MusicNotchAppView: NotchAppView {
             }
             .store(in: &cancellables)
 
+        nowPlaying.$playbackQuality
+            .receive(on: RunLoop.main)
+            .sink { [weak self] quality in
+                self?.qualityBadgeLabel.stringValue = quality?.badgeText ?? ""
+                self?.qualityBadgeLabel.toolTip = quality?.badgeText
+                self?.needsLayout = true
+            }
+            .store(in: &cancellables)
+
         Publishers.CombineLatest3(nowPlaying.$hasTrack, presentation.$showsPrimaryDetails, presentation.$isAppOpen)
             .receive(on: RunLoop.main)
             .sink { [weak self] hasTrack, details, playerOpen in
                 self?.updateMediaVisibility(hasTrack: hasTrack, details: details, playerOpen: playerOpen)
+            }
+            .store(in: &cancellables)
+
+        presentation.$primaryDetailsProgress
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateMediaVisibility(
+                    hasTrack: self.nowPlaying.hasTrack,
+                    details: self.presentation.showsPrimaryDetails,
+                    playerOpen: self.presentation.isAppOpen
+                )
+                self.needsLayout = true
             }
             .store(in: &cancellables)
 
@@ -261,7 +284,10 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     private func updateMediaVisibility(hasTrack: Bool, details: Bool, playerOpen: Bool) {
-        let compactDetails = hasTrack && details && !playerOpen
+        let detailsProgress = details || presentation.primaryDetailsProgress > 0
+            ? presentation.primaryDetailsProgress
+            : 0
+        let compactDetailsProgress = hasTrack && !playerOpen ? detailsProgress : 0
         let appIsVisible = playerOpen || presentation.appOpenProgress > 0.001
         artworkView.isHidden = !hasTrack && !appIsVisible
         waveformView.isHidden = !hasTrack
@@ -275,13 +301,9 @@ final class MusicNotchAppView: NotchAppView {
         fullPlayPauseButton.isEnabled = true
         nextButton.isEnabled = hasTrack
         outputButton.isEnabled = true
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.14
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            waveformView.animator().alphaValue = hasTrack && (!details || playerOpen) ? 1 : 0
-            pauseButton.animator().alphaValue = compactDetails ? 1 : 0
-            titleLabel.animator().alphaValue = compactDetails ? 1 : 0
-        }
+        waveformView.alphaValue = hasTrack ? (playerOpen ? 1 : 1 - compactDetailsProgress) : 0
+        pauseButton.alphaValue = compactDetailsProgress
+        titleLabel.alphaValue = compactDetailsProgress
         needsLayout = true
     }
 
@@ -289,26 +311,32 @@ final class MusicNotchAppView: NotchAppView {
         let progress = presentation.expansionProgress
         let width = presentation.hoverWidth
         let height = presentation.hoverHeight
-        let compactArtwork = max(18, presentation.compactHeight - 16)
-        let artworkSize = interpolate(compactArtwork, compactArtwork + 4, progress)
-        let sidePadding = interpolate(26, 32, progress)
-        let waveWidth = interpolate(34, 37, progress)
-        let compactWaveHeight = max(8, presentation.compactHeight - 22)
-        let waveHeight = interpolate(compactWaveHeight, compactWaveHeight + 2, progress)
-        // Media stays centered in the original notch band; expansion grows
-        // downward to make room for the title without moving the side items.
-        let centerY = bounds.maxY - presentation.compactHeight / 2
+        let compactArtwork = max(16, presentation.compactHeight - 22)
+        let artworkSize = interpolate(compactArtwork, compactArtwork + 1, progress)
+        let artworkPadding = interpolate(18, 26, progress)
+        let waveformPadding = interpolate(18, 22, progress)
+        let waveWidth = interpolate(18, 20, progress)
+        let compactWaveHeight = max(5, presentation.compactHeight - 34)
+        let waveHeight = interpolate(compactWaveHeight, compactWaveHeight + 1, progress)
+        // Detail expansion grows downward for the title. Keep the side media
+        // centered in the original notch band instead of letting it drift.
+        let mediaBandHeight = interpolate(
+            presentation.compactHeight,
+            presentation.expandedHeight,
+            progress
+        )
+        let centerY = bounds.maxY - mediaBandHeight / 2
         let left = bounds.midX - width / 2
         let right = bounds.midX + width / 2
 
         let compactArtworkFrame = NSRect(
-            x: left + sidePadding,
+            x: left + artworkPadding,
             y: centerY - artworkSize / 2,
             width: artworkSize,
             height: artworkSize
         )
         let compactWaveformFrame = NSRect(
-            x: right - sidePadding - waveWidth,
+            x: right - waveformPadding - waveWidth,
             y: centerY - waveHeight / 2,
             width: waveWidth,
             height: waveHeight
@@ -316,7 +344,13 @@ final class MusicNotchAppView: NotchAppView {
         artworkView.frame = compactArtworkFrame
         artworkView.layer?.cornerRadius = interpolate(6, 8, progress)
         waveformView.frame = compactWaveformFrame
-        pauseButton.frame = compactWaveformFrame
+        let playbackButtonSize: CGFloat = 22
+        pauseButton.frame = NSRect(
+            x: right - waveformPadding - playbackButtonSize,
+            y: centerY - playbackButtonSize / 2,
+            width: playbackButtonSize,
+            height: playbackButtonSize
+        )
         titleLabel.frame = NSRect(
             x: bounds.midX - min(260, width - 140) / 2,
             y: bounds.maxY - height + 4,
@@ -331,16 +365,20 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     private var fullPlayerViews: [NSView] {
-        [fullTitleLabel, artistLabel, elapsedLabel, remainingLabel, progressSlider,
+        [fullTitleLabel, artistLabel, qualityBadgeLabel, elapsedLabel, remainingLabel, progressSlider,
          shuffleButton, previousButton, fullPlayPauseButton, nextButton, outputButton]
     }
 
     private func configureFullPlayerControls() {
-        fullTitleLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        fullTitleLabel.font = .systemFont(ofSize: 16, weight: .bold)
         fullTitleLabel.textColor = .white
         fullTitleLabel.lineBreakMode = .byTruncatingTail
-        artistLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        artistLabel.font = .systemFont(ofSize: 12, weight: .medium)
         artistLabel.textColor = .secondaryLabelColor
+        qualityBadgeLabel.font = .systemFont(ofSize: 7, weight: .bold)
+        qualityBadgeLabel.textColor = .secondaryLabelColor
+        qualityBadgeLabel.alignment = .left
+        qualityBadgeLabel.lineBreakMode = .byClipping
         [elapsedLabel, remainingLabel].forEach {
             $0.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
             $0.textColor = .secondaryLabelColor
@@ -355,10 +393,10 @@ final class MusicNotchAppView: NotchAppView {
 
         configureButton(shuffleButton, symbol: "shuffle", pointSize: 17, action: #selector(toggleShuffle))
         shuffleButton.toolTip = "Turn Shuffle On"
-        configureButton(previousButton, symbol: "backward.fill", pointSize: 20, action: #selector(previousTrack))
-        configureButton(fullPlayPauseButton, symbol: "pause.fill", pointSize: 20, action: #selector(togglePlayback))
-        configureButton(nextButton, symbol: "forward.fill", pointSize: 20, action: #selector(nextTrack))
-        configureButton(outputButton, symbol: "airplayaudio", pointSize: 17, action: #selector(showAudioOutputs(_:)))
+        configureButton(previousButton, symbol: "backward.fill", pointSize: 19, action: #selector(previousTrack))
+        configureButton(fullPlayPauseButton, symbol: "pause.fill", pointSize: 24, action: #selector(togglePlayback))
+        configureButton(nextButton, symbol: "forward.fill", pointSize: 19, action: #selector(nextTrack))
+        configureButton(outputButton, symbol: "airplayaudio", pointSize: 19, action: #selector(showAudioOutputs(_:)))
         outputButton.toolTip = "Choose audio output"
 
         fullPlayerViews.forEach { view in
@@ -407,46 +445,56 @@ final class MusicNotchAppView: NotchAppView {
         let top = bounds.maxY
         let bottom = top - height
 
-        let fullArtwork = NSRect(x: left + 40, y: top - 100, width: 76, height: 76)
-        let fullWaveform = NSRect(x: right - 76, y: top - 57, width: 34, height: 16)
+        // Keep side content clear of the silhouette's 26-point shoulders.
+        let fullArtwork = NSRect(x: left + 48, y: top - 116, width: 64, height: 64)
+        let fullWaveform = NSRect(x: right - 72, y: top - 76, width: 28, height: 12)
+        let titleY = top - 85
+        let artistY = titleY - 20
         artworkView.frame = interpolate(compactArtwork, fullArtwork, progress)
-        artworkView.layer?.cornerRadius = interpolate(8, 14, progress)
+        artworkView.layer?.cornerRadius = interpolate(8, 12, progress)
         waveformView.frame = interpolate(compactWaveform, fullWaveform, progress)
         fullTitleLabel.frame = enteringFrame(
-            NSRect(x: left + 138, y: top - 59, width: 288, height: 25),
+            NSRect(x: left + 126, y: titleY, width: 190, height: 23),
             progress: metadataProgress,
             offset: 12
         )
         artistLabel.frame = enteringFrame(
-            NSRect(x: left + 138, y: top - 82, width: 288, height: 21),
+            NSRect(x: left + 126, y: artistY, width: 190, height: 18),
+            progress: metadataProgress,
+            offset: 12
+        )
+        qualityBadgeLabel.frame = enteringFrame(
+            NSRect(x: left + 126, y: artistY - 14, width: 90, height: 11),
             progress: metadataProgress,
             offset: 12
         )
 
+        let timelineY = bottom + 64
         elapsedLabel.frame = enteringFrame(
-            NSRect(x: left + 40, y: bottom + 43, width: 54, height: 19),
+            NSRect(x: left + 40, y: timelineY, width: 54, height: 19),
             progress: timelineProgress,
             offset: 10
         )
-        let finalSliderFrame = NSRect(x: left + 102, y: bottom + 43, width: width - 204, height: 19)
+        let finalSliderFrame = NSRect(x: left + 88, y: timelineY, width: width - 176, height: 19)
         let compressedSliderFrame = finalSliderFrame.insetBy(dx: 34, dy: 0).offsetBy(dx: 0, dy: 10)
         progressSlider.frame = interpolate(compressedSliderFrame, finalSliderFrame, timelineProgress)
         remainingLabel.frame = enteringFrame(
-            NSRect(x: right - 94, y: bottom + 43, width: 54, height: 19),
+            NSRect(x: right - 94, y: timelineY, width: 54, height: 19),
             progress: timelineProgress,
             offset: 10
         )
         remainingLabel.alignment = .right
 
-        let controlY = bottom + 6
-        shuffleButton.frame = enteringFrame(NSRect(x: left + 40, y: controlY, width: 32, height: 32), progress: controlsProgress, offset: 9)
-        previousButton.frame = enteringFrame(NSRect(x: playerCenterX - 106, y: controlY, width: 34, height: 32), progress: controlsProgress, offset: 9)
-        fullPlayPauseButton.frame = enteringFrame(NSRect(x: playerCenterX - 17, y: controlY, width: 34, height: 32), progress: controlsProgress, offset: 9)
-        nextButton.frame = enteringFrame(NSRect(x: playerCenterX + 72, y: controlY, width: 34, height: 32), progress: controlsProgress, offset: 9)
-        outputButton.frame = enteringFrame(NSRect(x: right - 72, y: controlY, width: 32, height: 32), progress: controlsProgress, offset: 9)
+        let controlY = bottom + 14
+        shuffleButton.frame = enteringFrame(NSRect(x: playerCenterX - 138, y: controlY, width: 36, height: 36), progress: controlsProgress, offset: 9)
+        previousButton.frame = enteringFrame(NSRect(x: playerCenterX - 77, y: controlY, width: 38, height: 36), progress: controlsProgress, offset: 9)
+        fullPlayPauseButton.frame = enteringFrame(NSRect(x: playerCenterX - 20, y: controlY - 2, width: 40, height: 40), progress: controlsProgress, offset: 9)
+        nextButton.frame = enteringFrame(NSRect(x: playerCenterX + 39, y: controlY, width: 38, height: 36), progress: controlsProgress, offset: 9)
+        outputButton.frame = enteringFrame(NSRect(x: playerCenterX + 102, y: controlY, width: 36, height: 36), progress: controlsProgress, offset: 9)
 
         fullTitleLabel.alphaValue = metadataProgress
         artistLabel.alphaValue = metadataProgress
+        qualityBadgeLabel.alphaValue = nowPlaying.playbackQuality == nil ? 0 : metadataProgress
         elapsedLabel.alphaValue = timelineProgress
         progressSlider.alphaValue = timelineProgress
         remainingLabel.alphaValue = timelineProgress
@@ -501,8 +549,8 @@ final class MusicNotchAppView: NotchAppView {
         let right = bounds.midX + width / 2
         let top = bounds.maxY
         let bottom = top - height
-        let compactShoulder = min(28, presentation.hoverHeight * 0.42)
-        let compactRadius = min(26, presentation.hoverHeight * 0.38)
+        let compactShoulder = min(18, presentation.hoverHeight * 0.26)
+        let compactRadius = min(18, presentation.hoverHeight * 0.28)
         let shoulder = interpolate(compactShoulder, 26, presentation.appOpenProgress)
         let radius = interpolate(compactRadius, 30, presentation.appOpenProgress)
         let leftWall = left + shoulder

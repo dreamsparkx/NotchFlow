@@ -21,6 +21,9 @@
 		B10000000000000000000015 /* MusicNotchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000019 /* MusicNotchApp.swift */; };
 		B10000000000000000000016 /* MusicNotchAppView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000020 /* MusicNotchAppView.swift */; };
 		B10000000000000000000017 /* AudioOutputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000021 /* AudioOutputService.swift */; };
+		B10000000000000000000018 /* PermissionsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000022 /* PermissionsWindowController.swift */; };
+		B10000000000000000000019 /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = B90000000000000000000001 /* PermissionFlow */; };
+		B1000000000000000000001A /* PermissionFlowInputMonitoringStatus in Frameworks */ = {isa = PBXBuildFile; productRef = B90000000000000000000002 /* PermissionFlowInputMonitoringStatus */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +45,7 @@
 		B20000000000000000000019 /* MusicNotchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicNotchApp.swift; sourceTree = "<group>"; };
 		B20000000000000000000020 /* MusicNotchAppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicNotchAppView.swift; sourceTree = "<group>"; };
 		B20000000000000000000021 /* AudioOutputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioOutputService.swift; sourceTree = "<group>"; };
+		B20000000000000000000022 /* PermissionsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindowController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +53,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000000000000000000019 /* PermissionFlow in Frameworks */,
+				B1000000000000000000001A /* PermissionFlowInputMonitoringStatus in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -107,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000002 /* NotchWindowController.swift */,
+				B20000000000000000000022 /* PermissionsWindowController.swift */,
 			);
 			path = Controllers;
 			sourceTree = "<group>";
@@ -175,6 +182,10 @@
 			dependencies = (
 			);
 			name = NotchFlow;
+			packageProductDependencies = (
+				B90000000000000000000001 /* PermissionFlow */,
+				B90000000000000000000002 /* PermissionFlowInputMonitoringStatus */,
+			);
 			productName = NotchFlow;
 			productReference = B20000000000000000000007 /* NotchFlow.app */;
 			productType = "com.apple.product-type.application";
@@ -204,6 +215,9 @@
 			);
 			mainGroup = B40000000000000000000001;
 			productRefGroup = B40000000000000000000004 /* Products */;
+			packageReferences = (
+				B80000000000000000000001 /* XCRemoteSwiftPackageReference "PermissionFlow" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -241,10 +255,35 @@
 				B10000000000000000000015 /* MusicNotchApp.swift in Sources */,
 				B10000000000000000000016 /* MusicNotchAppView.swift in Sources */,
 				B10000000000000000000017 /* AudioOutputService.swift in Sources */,
+				B10000000000000000000018 /* PermissionsWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B80000000000000000000001 /* XCRemoteSwiftPackageReference "PermissionFlow" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jaywcjlove/PermissionFlow.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.11.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B90000000000000000000001 /* PermissionFlow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B80000000000000000000001 /* XCRemoteSwiftPackageReference "PermissionFlow" */;
+			productName = PermissionFlow;
+		};
+		B90000000000000000000002 /* PermissionFlowInputMonitoringStatus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B80000000000000000000001 /* XCRemoteSwiftPackageReference "PermissionFlow" */;
+			productName = PermissionFlowInputMonitoringStatus;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		B70000000000000000000001 /* Debug */ = {

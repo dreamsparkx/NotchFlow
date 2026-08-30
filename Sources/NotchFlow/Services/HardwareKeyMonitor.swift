@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 
 final class HardwareKeyMonitor {
@@ -28,9 +27,6 @@ final class HardwareKeyMonitor {
 
     func start() {
         guard !installEventTap() else { return }
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-        _ = CGRequestListenEventAccess()
         installFallbackMonitor()
 
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in

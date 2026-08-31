@@ -1,8 +1,9 @@
-final class MusicNotchApp: NotchApp {
-    let identifier = "music"
+final class NowPlayingNotchApp: NotchApp {
+    let identifier = "now-playing"
+    let displayName = "Now Playing"
     private let nowPlaying = NowPlayingModel()
 
     func makeView(presentation: NotchPresentationModel) -> NotchAppView {
-        MusicNotchAppView(nowPlaying: nowPlaying, presentation: presentation)
+        NowPlayingNotchAppView(nowPlaying: nowPlaying, presentation: presentation)
     }
 }

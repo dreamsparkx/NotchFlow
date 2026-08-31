@@ -4,7 +4,7 @@ import CoreAudio
 
 /// Draws the silhouette in native AppKit coordinates. This avoids SwiftUI's
 /// automatic camera-safe-area padding changing the visible height.
-final class MusicNotchAppView: NotchAppView {
+final class NowPlayingNotchAppView: NotchAppView {
     private let presentation: NotchPresentationModel
     private let nowPlaying: NowPlayingModel
     private let artworkView = NSImageView()
@@ -212,6 +212,7 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isAppActive else { return nil }
         let interactiveButtons = [pauseButton, progressSlider, shuffleButton, previousButton, fullPlayPauseButton, nextButton, outputButton]
         for view in interactiveButtons where !view.isHidden && view.alphaValue > 0.05 && view.frame.contains(point) {
             return view
@@ -220,6 +221,7 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     override func isPointerOverPrimaryContent(_ screenPoint: NSPoint) -> Bool {
+        guard isAppActive else { return false }
         guard let window else { return false }
         let windowPoint = window.convertPoint(fromScreen: screenPoint)
         let localPoint = convert(windowPoint, from: nil)
@@ -229,13 +231,26 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     @objc private func togglePlayback() {
+        guard isAppActive else { return }
         nowPlaying.togglePlayback()
     }
 
-    @objc private func previousTrack() { nowPlaying.previousTrack() }
-    @objc private func nextTrack() { nowPlaying.nextTrack() }
-    @objc private func toggleShuffle() { nowPlaying.toggleShuffle() }
+    @objc private func previousTrack() {
+        guard isAppActive else { return }
+        nowPlaying.previousTrack()
+    }
+
+    @objc private func nextTrack() {
+        guard isAppActive else { return }
+        nowPlaying.nextTrack()
+    }
+
+    @objc private func toggleShuffle() {
+        guard isAppActive else { return }
+        nowPlaying.toggleShuffle()
+    }
     @objc private func showAudioOutputs(_ sender: NSButton) {
+        guard isAppActive else { return }
         let menu = NSMenu(title: "Audio Output")
         let devices = AudioOutputManager.availableDevices()
         if devices.isEmpty {
@@ -269,16 +284,19 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     @objc private func selectAudioOutput(_ sender: NSMenuItem) {
+        guard isAppActive else { return }
         guard let identifier = sender.representedObject as? NSNumber else { return }
         _ = AudioOutputManager.select(AudioDeviceID(identifier.uint32Value))
     }
 
     @objc private func openSoundSettings() {
+        guard isAppActive else { return }
         guard let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") else { return }
         NSWorkspace.shared.open(url)
     }
 
     @objc private func previewSeek(_ sender: NSSlider) {
+        guard isAppActive else { return }
         elapsedLabel.stringValue = formatTime(sender.doubleValue)
         remainingLabel.stringValue = "-" + formatTime(max(0, sender.maxValue - sender.doubleValue))
     }
@@ -389,7 +407,10 @@ final class MusicNotchAppView: NotchAppView {
         progressSlider.isContinuous = true
         progressSlider.controlSize = .small
         progressSlider.cell = PlayerSliderCell()
-        progressSlider.onEditingEnded = { [weak self] value in self?.nowPlaying.seek(to: value) }
+        progressSlider.onEditingEnded = { [weak self] value in
+            guard let self, self.isAppActive else { return }
+            self.nowPlaying.seek(to: value)
+        }
 
         configureButton(shuffleButton, symbol: "shuffle", pointSize: 17, action: #selector(toggleShuffle))
         shuffleButton.toolTip = "Turn Shuffle On"
@@ -543,47 +564,7 @@ final class MusicNotchAppView: NotchAppView {
     }
 
     private func silhouettePath() -> NSBezierPath {
-        let width = presentation.currentWidth
-        let height = presentation.currentHeight
-        let left = bounds.midX - width / 2
-        let right = bounds.midX + width / 2
-        let top = bounds.maxY
-        let bottom = top - height
-        let compactShoulder = min(18, presentation.hoverHeight * 0.26)
-        let compactRadius = min(18, presentation.hoverHeight * 0.28)
-        let shoulder = interpolate(compactShoulder, 26, presentation.appOpenProgress)
-        let radius = interpolate(compactRadius, 30, presentation.appOpenProgress)
-        let leftWall = left + shoulder
-        let rightWall = right - shoulder
-
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: left, y: top))
-        path.line(to: NSPoint(x: right, y: top))
-        path.curve(
-            to: NSPoint(x: rightWall, y: top - shoulder),
-            controlPoint1: NSPoint(x: right - shoulder * 0.55, y: top),
-            controlPoint2: NSPoint(x: rightWall, y: top - shoulder * 0.48)
-        )
-        path.line(to: NSPoint(x: rightWall, y: bottom + radius))
-        path.curve(
-            to: NSPoint(x: rightWall - radius, y: bottom),
-            controlPoint1: NSPoint(x: rightWall, y: bottom + radius * 0.35),
-            controlPoint2: NSPoint(x: rightWall - radius * 0.35, y: bottom)
-        )
-        path.line(to: NSPoint(x: leftWall + radius, y: bottom))
-        path.curve(
-            to: NSPoint(x: leftWall, y: bottom + radius),
-            controlPoint1: NSPoint(x: leftWall + radius * 0.35, y: bottom),
-            controlPoint2: NSPoint(x: leftWall, y: bottom + radius * 0.35)
-        )
-        path.line(to: NSPoint(x: leftWall, y: top - shoulder))
-        path.curve(
-            to: NSPoint(x: left, y: top),
-            controlPoint1: NSPoint(x: leftWall, y: top - shoulder * 0.48),
-            controlPoint2: NSPoint(x: left + shoulder * 0.55, y: top)
-        )
-        path.close()
-        return path
+        NotchSilhouette.path(in: bounds, presentation: presentation)
     }
 
     private func interpolate(_ start: CGFloat, _ end: CGFloat, _ progress: CGFloat) -> CGFloat {

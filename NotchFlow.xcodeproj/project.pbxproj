@@ -24,6 +24,7 @@
 		B10000000000000000000018 /* PermissionsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000022 /* PermissionsWindowController.swift */; };
 		B10000000000000000000019 /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = B90000000000000000000001 /* PermissionFlow */; };
 		B1000000000000000000001A /* PermissionFlowInputMonitoringStatus in Frameworks */ = {isa = PBXBuildFile; productRef = B90000000000000000000002 /* PermissionFlowInputMonitoringStatus */; };
+		B1000000000000000000001B /* NotchSectionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000023 /* NotchSectionViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +47,7 @@
 		B20000000000000000000020 /* MusicNotchAppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicNotchAppView.swift; sourceTree = "<group>"; };
 		B20000000000000000000021 /* AudioOutputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioOutputService.swift; sourceTree = "<group>"; };
 		B20000000000000000000022 /* PermissionsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindowController.swift; sourceTree = "<group>"; };
+		B20000000000000000000023 /* NotchSectionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchSectionViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000013 /* SystemHUDView.swift */,
+				B20000000000000000000023 /* NotchSectionViews.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -256,6 +259,7 @@
 				B10000000000000000000016 /* MusicNotchAppView.swift in Sources */,
 				B10000000000000000000017 /* AudioOutputService.swift in Sources */,
 				B10000000000000000000018 /* PermissionsWindowController.swift in Sources */,
+				B1000000000000000000001B /* NotchSectionViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 final class NotchWindowController: NSWindowController {
-    private let notchApp: any NotchApp
+    private let homeApps: [any NotchApp]
     private let presentation = NotchPresentationModel()
     private var hoverTimer: Timer?
     private var collapseWorkItem: DispatchWorkItem?
@@ -13,8 +13,8 @@ final class NotchWindowController: NSWindowController {
     private var localClickMonitor: Any?
     private var hardwareKeyMonitor: HardwareKeyMonitor?
 
-    init(notchApp: any NotchApp = MusicNotchApp()) {
-        self.notchApp = notchApp
+    init(homeApps: [any NotchApp] = [NowPlayingNotchApp()]) {
+        self.homeApps = homeApps
         let size = NSSize(width: 620, height: 90)
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
@@ -31,9 +31,12 @@ final class NotchWindowController: NSWindowController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        let contentView = notchApp.makeView(presentation: presentation)
+        let contentView = NotchHomeView(apps: homeApps, presentation: presentation)
         notchContentView = contentView
-        panel.contentView = contentView
+        panel.contentView = NotchHostView(
+            notchContentView: contentView,
+            presentation: presentation
+        )
 
         super.init(window: panel)
         updateCompactMetrics()
@@ -148,7 +151,7 @@ final class NotchWindowController: NSWindowController {
     private func resizeWindow(forApp isOpen: Bool) {
         guard let panel = window, let screen = panel.screen ?? NSScreen.main else { return }
         let size = isOpen
-            ? NSSize(width: presentation.openAppWidth + 100, height: presentation.openAppHeight + 30)
+            ? NSSize(width: presentation.openAppWidth + 100, height: presentation.openAppHeight + 64)
             : NSSize(width: 620, height: 90)
         let frame = NSRect(
             x: screen.frame.midX - size.width / 2,

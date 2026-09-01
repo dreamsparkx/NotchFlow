@@ -1,6 +1,6 @@
 import AppKit
 
-enum NotchSection: CaseIterable {
+enum NotchSection: CaseIterable, Equatable {
     case home
     case tray
     case apps

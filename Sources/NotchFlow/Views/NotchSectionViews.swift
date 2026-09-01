@@ -15,6 +15,15 @@ final class NotchHostView: NSView {
         self.sectionContentView = NotchSectionContentView(presentation: presentation)
         super.init(frame: .zero)
 
+        sectionContentView.onSelectApp = { [weak self] identifier in
+            if identifier == "file-tray" {
+                self?.selectSection(.tray)
+                return
+            }
+            (self?.notchContentView as? NotchHomeView)?.selectApp(identifier: identifier)
+            self?.selectSection(.home)
+        }
+
         addSubview(notchContentView)
         sectionContentView.isHidden = true
         sectionContentView.alphaValue = 0
@@ -24,9 +33,12 @@ final class NotchHostView: NSView {
             self?.selectSection(section)
         }
 
-        presentation.$appOpenProgress
+        Publishers.CombineLatest(
+            presentation.$appOpenProgress,
+            presentation.$sectionExpansionProgress
+        )
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] _, _ in
                 self?.needsLayout = true
                 self?.sectionContentView.needsLayout = true
             }
@@ -62,10 +74,12 @@ final class NotchHostView: NSView {
 
     private func selectSection(_ section: NotchSection, animated: Bool = true) {
         guard selectedSection != section else { return }
+        let previousSection = selectedSection
         selectedSection = section
-        sectionSwitcher.setSelectedSection(section)
+        sectionSwitcher.setSelectedSection(section, animated: animated)
 
         if section == .home {
+            presentation.setAlternateSectionVisible(false, animated: animated)
             notchContentView.isHidden = false
             notchContentView.setAppActive(true)
             guard animated else {
@@ -86,20 +100,21 @@ final class NotchHostView: NSView {
 
         // The selected section becomes the sole responder before its visual
         // transition begins, preventing any event from reaching Now Playing.
+        presentation.setAlternateSectionVisible(true, animated: animated)
         notchContentView.setAppActive(false)
-        sectionContentView.configure(for: section)
+        sectionContentView.show(section, animated: animated && previousSection != .home)
         sectionContentView.isHidden = false
-        if animated {
+        if animated && previousSection == .home {
             sectionContentView.alphaValue = 0
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.14
+                context.duration = 0.20
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 sectionContentView.animator().alphaValue = 1
             } completionHandler: { [weak self] in
                 guard self?.selectedSection != .home else { return }
                 self?.notchContentView.isHidden = true
             }
-        } else {
+        } else if !animated {
             sectionContentView.alphaValue = 1
             notchContentView.isHidden = true
         }
@@ -114,6 +129,7 @@ final class NotchSectionSwitcherView: NSView {
     var onSelection: ((NotchSection) -> Void)?
 
     private let buttons: [NotchSectionButton]
+    private let selectionIndicator = NSView()
     private let separators = [NSView(), NSView()]
     private var selectedSection: NotchSection = .home
 
@@ -136,6 +152,10 @@ final class NotchSectionSwitcherView: NSView {
         layer?.shadowRadius = 6
         layer?.shadowOffset = NSSize(width: 0, height: -2)
 
+        selectionIndicator.wantsLayer = true
+        selectionIndicator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.19).cgColor
+        selectionIndicator.layer?.cornerRadius = 14
+        addSubview(selectionIndicator)
         for button in buttons {
             button.target = self
             button.action = #selector(selectSection(_:))
@@ -151,14 +171,24 @@ final class NotchSectionSwitcherView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func setSelectedSection(_ section: NotchSection) {
+    func setSelectedSection(_ section: NotchSection, animated: Bool = true) {
         selectedSection = section
         updateSelection()
+        guard animated, bounds.width > 0 else {
+            needsLayout = true
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            selectionIndicator.animator().frame = indicatorFrame(for: section)
+        }
     }
 
     override func layout() {
         super.layout()
         let buttonWidth = bounds.width / 3
+        selectionIndicator.frame = indicatorFrame(for: selectedSection)
         for (index, button) in buttons.enumerated() {
             button.frame = NSRect(
                 x: CGFloat(index) * buttonWidth + 3,
@@ -179,13 +209,23 @@ final class NotchSectionSwitcherView: NSView {
 
     @objc private func selectSection(_ sender: NotchSectionButton) {
         guard selectedSection != sender.section else { return }
-        selectedSection = sender.section
-        updateSelection()
+        setSelectedSection(sender.section)
         onSelection?(sender.section)
     }
 
     private func updateSelection() {
         buttons.forEach { $0.setSelected($0.section == selectedSection) }
+    }
+
+    private func indicatorFrame(for section: NotchSection) -> NSRect {
+        let index = NotchSection.allCases.firstIndex(of: section) ?? 0
+        let buttonWidth = bounds.width / 3
+        return NSRect(
+            x: CGFloat(index) * buttonWidth + 3,
+            y: 3,
+            width: buttonWidth - 6,
+            height: bounds.height - 6
+        )
     }
 }
 
@@ -213,74 +253,75 @@ private final class NotchSectionButton: NSButton {
     func setSelected(_ selected: Bool) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer?.backgroundColor = selected
-            ? NSColor.white.withAlphaComponent(0.19).cgColor
-            : NSColor.clear.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
         contentTintColor = selected ? .white : .secondaryLabelColor
         CATransaction.commit()
     }
 }
 
 final class NotchSectionContentView: NSView {
+    var onSelectApp: ((String) -> Void)?
+
     private let presentation: NotchPresentationModel
     private let clipMask = CAShapeLayer()
-    private let iconView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
-    private let detailPill = NSView()
-    private let detailIcon = NSImageView()
-    private let detailLabel = NSTextField(labelWithString: "")
+    private let trayView: NotchTrayView
+    private let appsView: NotchAppsCarouselView
+    private var currentSection: NotchSection?
 
     init(presentation: NotchPresentationModel) {
         self.presentation = presentation
+        self.trayView = NotchTrayView(presentation: presentation)
+        self.appsView = NotchAppsCarouselView(presentation: presentation)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         clipMask.fillColor = NSColor.black.cgColor
         layer?.mask = clipMask
-
-        iconView.contentTintColor = .white
-        iconView.imageScaling = .scaleProportionallyDown
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.textColor = .white
-        titleLabel.alignment = .center
-        subtitleLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.alignment = .center
-
-        detailPill.wantsLayer = true
-        detailPill.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
-        detailPill.layer?.cornerRadius = 11
-        detailIcon.contentTintColor = .white
-        detailIcon.imageScaling = .scaleProportionallyDown
-        detailLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        detailLabel.textColor = .white
-
-        [iconView, titleLabel, subtitleLabel, detailPill].forEach(addSubview)
-        detailPill.addSubview(detailIcon)
-        detailPill.addSubview(detailLabel)
+        trayView.isHidden = true
+        appsView.isHidden = true
+        appsView.onSelectApp = { [weak self] identifier in
+            self?.onSelectApp?(identifier)
+        }
+        addSubview(trayView)
+        addSubview(appsView)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(for section: NotchSection) {
-        switch section {
-        case .home:
-            break
-        case .tray:
-            setSymbol("tray.full.fill", for: iconView, pointSize: 29)
-            titleLabel.stringValue = "Tray"
-            subtitleLabel.stringValue = "Drop files here for quick access"
-            setSymbol("plus", for: detailIcon, pointSize: 10)
-            detailLabel.stringValue = "Ready for files"
-        case .apps:
-            setSymbol("square.grid.2x2.fill", for: iconView, pointSize: 27)
-            titleLabel.stringValue = "Notch Apps"
-            subtitleLabel.stringValue = "Choose what appears in your notch"
-            setSymbol("music.note", for: detailIcon, pointSize: 10)
-            detailLabel.stringValue = "Now Playing"
-        }
+    func show(_ section: NotchSection, animated: Bool) {
+        guard section != .home else { return }
+        let incoming = section == .tray ? trayView : appsView
+        let outgoing = currentSection == .tray ? trayView : currentSection == .apps ? appsView : nil
+        currentSection = section
+
+        guard incoming !== outgoing else { return }
+        incoming.isHidden = false
+        incoming.alphaValue = animated ? 0 : 1
+        incoming.layer?.setAffineTransform(animated
+            ? CGAffineTransform(scaleX: 0.96, y: 0.96)
+            : .identity)
         needsLayout = true
+        layoutSubtreeIfNeeded()
+
+        guard animated else {
+            outgoing?.isHidden = true
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            outgoing?.animator().alphaValue = 0
+            incoming.animator().alphaValue = 1
+        } completionHandler: {
+            outgoing?.isHidden = true
+            outgoing?.alphaValue = 1
+        }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        incoming.layer?.setAffineTransform(.identity)
+        CATransaction.commit()
     }
 
     override func layout() {
@@ -291,30 +332,231 @@ final class NotchSectionContentView: NSView {
         clipMask.path = NotchSilhouette.path(in: bounds, presentation: presentation).cgPath
         CATransaction.commit()
 
-        let visibleWidth = presentation.currentWidth
-        let visibleHeight = presentation.currentHeight
-        let visibleBottom = bounds.maxY - visibleHeight
-        let centerX = bounds.midX
-        let contentCenterY = visibleBottom + (visibleHeight - 24) / 2
-        let contentLeft = centerX - visibleWidth / 2 + 26
-        let contentWidth = visibleWidth - 52
-        iconView.frame = NSRect(x: centerX - 20, y: contentCenterY + 22, width: 40, height: 40)
-        titleLabel.frame = NSRect(x: contentLeft, y: contentCenterY - 4, width: contentWidth, height: 23)
-        subtitleLabel.frame = NSRect(x: contentLeft, y: contentCenterY - 25, width: contentWidth, height: 17)
-        detailPill.frame = NSRect(x: centerX - 59, y: contentCenterY - 58, width: 118, height: 23)
-        detailIcon.frame = NSRect(x: 10, y: 5, width: 13, height: 13)
-        detailLabel.frame = NSRect(x: 29, y: 3, width: 79, height: 17)
+        trayView.frame = bounds
+        appsView.frame = bounds
+        trayView.needsLayout = true
+        appsView.needsLayout = true
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        NotchSilhouette.path(in: bounds, presentation: presentation).contains(point) ? self : nil
+        guard NotchSilhouette.path(in: bounds, presentation: presentation).contains(point) else { return nil }
+        return super.hitTest(point) ?? self
+    }
+}
+
+private final class NotchTrayView: NSView {
+    private let presentation: NotchPresentationModel
+    private let borderLayer = CAShapeLayer()
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "Tray")
+
+    init(presentation: NotchPresentationModel) {
+        self.presentation = presentation
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        borderLayer.fillColor = NSColor.clear.cgColor
+        borderLayer.strokeColor = NSColor.white.withAlphaComponent(0.13).cgColor
+        borderLayer.lineWidth = 2
+        borderLayer.lineDashPattern = [6, 5]
+        layer?.addSublayer(borderLayer)
+
+        iconView.image = NSImage(
+            systemSymbolName: "tray.full.fill",
+            accessibilityDescription: "Tray"
+        )?.withSymbolConfiguration(.init(pointSize: 23, weight: .medium))
+        iconView.contentTintColor = NSColor.white.withAlphaComponent(0.43)
+        iconView.imageScaling = .scaleProportionallyDown
+        titleLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        titleLabel.textColor = NSColor.white.withAlphaComponent(0.43)
+        titleLabel.alignment = .center
+        addSubview(iconView)
+        addSubview(titleLabel)
     }
 
-    private func setSymbol(_ name: String, for imageView: NSImageView, pointSize: CGFloat) {
-        imageView.image = NSImage(
-            systemSymbolName: name,
-            accessibilityDescription: nil
-        )?.withSymbolConfiguration(.init(pointSize: pointSize, weight: .medium))
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        let width = presentation.currentWidth
+        let height = presentation.currentHeight
+        let left = bounds.midX - width / 2
+        let bottom = bounds.maxY - height
+        let dropFrame = NSRect(x: left + 36, y: bottom + 28, width: width - 72, height: height - 66)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        borderLayer.frame = bounds
+        borderLayer.path = NSBezierPath(
+            roundedRect: dropFrame,
+            xRadius: 18,
+            yRadius: 18
+        ).cgPath
+        CATransaction.commit()
+
+        iconView.frame = NSRect(x: dropFrame.midX - 18, y: dropFrame.midY + 1, width: 36, height: 28)
+        titleLabel.frame = NSRect(x: dropFrame.midX - 60, y: dropFrame.midY - 23, width: 120, height: 19)
+    }
+}
+
+private final class NotchAppsCarouselView: NSView {
+    var onSelectApp: ((String) -> Void)?
+
+    private let presentation: NotchPresentationModel
+    private let scrollView = NSScrollView()
+    private let stripView = NSView()
+    private let tiles: [NotchAppTileView]
+
+    init(presentation: NotchPresentationModel) {
+        self.presentation = presentation
+        let definitions: [(String, String, NSColor, String?, String?)] = [
+            ("File Tray", "folder.fill", .systemBlue, "file-tray", "/System/Library/CoreServices/Finder.app"),
+            ("Weather", "cloud.sun.fill", .systemCyan, nil, "/System/Applications/Weather.app"),
+            ("Now Playing", "waveform", .systemRed, "now-playing", "/System/Applications/Music.app"),
+            ("Notifications", "bell.fill", .systemRed, nil, nil),
+            ("Camera", "video.fill", .systemGreen, nil, "/System/Applications/FaceTime.app"),
+            ("Calendar", "calendar", .systemRed, nil, "/System/Applications/Calendar.app"),
+            ("Notes", "note.text", .systemYellow, nil, "/System/Applications/Notes.app"),
+            ("Clipboard", "clipboard.fill", .systemBlue, nil, nil),
+            ("System Stats", "chart.bar.fill", .systemPurple, nil, nil)
+        ]
+        tiles = definitions.map {
+            NotchAppTileView(
+                title: $0.0,
+                symbol: $0.1,
+                color: $0.2,
+                identifier: $0.3,
+                applicationPath: $0.4
+            )
+        }
+        super.init(frame: .zero)
+        wantsLayer = true
+
+        scrollView.drawsBackground = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.horizontalScrollElasticity = .automatic
+        scrollView.verticalScrollElasticity = .none
+        scrollView.documentView = stripView
+        addSubview(scrollView)
+        for tile in tiles {
+            tile.onSelect = { [weak self] identifier in self?.onSelectApp?(identifier) }
+            stripView.addSubview(tile)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        let width = presentation.currentWidth
+        let height = presentation.currentHeight
+        let left = bounds.midX - width / 2
+        let bottom = bounds.maxY - height
+        scrollView.frame = NSRect(x: left + 24, y: bottom + 28, width: width - 48, height: height - 58)
+
+        let tileWidth: CGFloat = 76
+        let gap: CGFloat = 13
+        let totalWidth = 20 + CGFloat(tiles.count) * tileWidth + CGFloat(tiles.count - 1) * gap + 20
+        stripView.frame = NSRect(x: 0, y: 0, width: totalWidth, height: scrollView.contentSize.height)
+        for (index, tile) in tiles.enumerated() {
+            tile.frame = NSRect(x: 20 + CGFloat(index) * (tileWidth + gap), y: 5, width: tileWidth, height: 103)
+        }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            ? event.scrollingDeltaX
+            : event.scrollingDeltaY
+        let clipView = scrollView.contentView
+        let maximumX = max(0, stripView.bounds.width - clipView.bounds.width)
+        let nextX = min(maximumX, max(0, clipView.bounds.origin.x + delta))
+        clipView.scroll(to: NSPoint(x: nextX, y: 0))
+        scrollView.reflectScrolledClipView(clipView)
+    }
+}
+
+private final class NotchAppTileView: NSView {
+    var onSelect: ((String) -> Void)?
+
+    private let iconBackground = NSView()
+    private let iconView = NSImageView()
+    private let titleLabel: NSTextField
+    private let button = NSButton()
+    private let appIdentifier: String?
+    private let usesApplicationIcon: Bool
+
+    init(
+        title: String,
+        symbol: String,
+        color: NSColor,
+        identifier: String?,
+        applicationPath: String?
+    ) {
+        titleLabel = NSTextField(labelWithString: title)
+        self.appIdentifier = identifier
+        self.usesApplicationIcon = applicationPath.map(FileManager.default.fileExists) ?? false
+        super.init(frame: .zero)
+
+        iconBackground.wantsLayer = true
+        iconBackground.layer?.backgroundColor = usesApplicationIcon
+            ? NSColor.clear.cgColor
+            : color.withAlphaComponent(0.86).cgColor
+        iconBackground.layer?.cornerRadius = 14
+        iconBackground.layer?.borderWidth = usesApplicationIcon ? 0 : 0.5
+        iconBackground.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
+        if usesApplicationIcon, let applicationPath {
+            iconView.image = NSWorkspace.shared.icon(forFile: applicationPath)
+            iconView.contentTintColor = nil
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+        } else {
+            iconView.image = NSImage(
+                systemSymbolName: symbol,
+                accessibilityDescription: title
+            )?.withSymbolConfiguration(.init(pointSize: 24, weight: .medium))
+            iconView.contentTintColor = .white
+            iconView.imageScaling = .scaleProportionallyDown
+        }
+        titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        titleLabel.textColor = .white
+        titleLabel.alignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        addSubview(iconBackground)
+        iconBackground.addSubview(iconView)
+        addSubview(titleLabel)
+        button.isBordered = false
+        button.imagePosition = .noImage
+        button.title = ""
+        button.target = self
+        button.action = #selector(activateApp)
+        button.isEnabled = identifier != nil
+        button.toolTip = identifier == nil ? "Coming soon" : "Open \(title)"
+        addSubview(button)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        let iconSize: CGFloat = usesApplicationIcon ? 70 : 58
+        iconBackground.frame = NSRect(
+            x: bounds.midX - iconSize / 2,
+            y: 63 - iconSize / 2,
+            width: iconSize,
+            height: iconSize
+        )
+        iconView.frame = usesApplicationIcon
+            ? iconBackground.bounds
+            : iconBackground.bounds.insetBy(dx: 12, dy: 12)
+        titleLabel.frame = NSRect(x: 0, y: 9, width: bounds.width, height: 18)
+        button.frame = bounds
+    }
+
+    @objc private func activateApp() {
+        guard let appIdentifier else { return }
+        onSelect?(appIdentifier)
     }
 }
 

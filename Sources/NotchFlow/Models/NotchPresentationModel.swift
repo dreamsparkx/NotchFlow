@@ -13,6 +13,7 @@ final class NotchPresentationModel: ObservableObject {
     @Published private(set) var primaryDetailsProgress: CGFloat = 0
     @Published private(set) var isAppOpen = false
     @Published private(set) var appOpenProgress: CGFloat = 0
+    @Published private(set) var sectionExpansionProgress: CGFloat = 0
     @Published private(set) var systemHUDProgress: CGFloat = 0
     @Published private(set) var systemHUDLevel: Double = 0.5
     @Published private(set) var systemHUDKind: SystemHUDKind = .brightness
@@ -24,6 +25,7 @@ final class NotchPresentationModel: ObservableObject {
     private var animationTimer: Timer?
     private var primaryDetailsAnimationTimer: Timer?
     private var appOpenAnimationTimer: Timer?
+    private var sectionAnimationTimer: Timer?
     private var systemHUDAnimationTimer: Timer?
     private var systemHUDHideWorkItem: DispatchWorkItem?
 
@@ -39,7 +41,8 @@ final class NotchPresentationModel: ObservableObject {
     }
     private var appWidth: CGFloat { hoverWidth + (openAppWidth - hoverWidth) * appOpenProgress }
     private var appHeight: CGFloat { hoverHeight + (openAppHeight - hoverHeight) * appOpenProgress }
-    var currentWidth: CGFloat { appWidth + (systemHUDWidth - appWidth) * systemHUDProgress }
+    private var sectionWidth: CGFloat { appWidth + 58 * sectionExpansionProgress * appOpenProgress }
+    var currentWidth: CGFloat { sectionWidth + (systemHUDWidth - sectionWidth) * systemHUDProgress }
     var currentHeight: CGFloat { appHeight + (systemHUDHeight - appHeight) * systemHUDProgress }
     var isSystemHUDVisible: Bool { systemHUDProgress > 0.001 || systemHUDHideWorkItem != nil }
 
@@ -47,6 +50,7 @@ final class NotchPresentationModel: ObservableObject {
         animationTimer?.invalidate()
         primaryDetailsAnimationTimer?.invalidate()
         appOpenAnimationTimer?.invalidate()
+        sectionAnimationTimer?.invalidate()
         systemHUDAnimationTimer?.invalidate()
         systemHUDHideWorkItem?.cancel()
     }
@@ -118,6 +122,7 @@ final class NotchPresentationModel: ObservableObject {
         primaryDetailsAnimationTimer = nil
         primaryDetailsProgress = 0
         isAppOpen = open
+        if !open { setAlternateSectionVisible(false, animated: false) }
 
         let start = appOpenProgress
         let target: CGFloat = open ? 1 : 0
@@ -138,6 +143,33 @@ final class NotchPresentationModel: ObservableObject {
             }
         }
         appOpenAnimationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func setAlternateSectionVisible(_ visible: Bool, animated: Bool = true) {
+        sectionAnimationTimer?.invalidate()
+        let start = sectionExpansionProgress
+        let target: CGFloat = visible ? 1 : 0
+        guard animated, abs(target - start) > 0.001 else {
+            sectionExpansionProgress = target
+            return
+        }
+
+        let duration = 0.20 * Double(abs(target - start))
+        let startedAt = Date.timeIntervalSinceReferenceDate
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let elapsed = Date.timeIntervalSinceReferenceDate - startedAt
+            let linear = min(1, elapsed / max(0.08, duration))
+            let eased = 1 - pow(1 - linear, 3)
+            self.sectionExpansionProgress = start + (target - start) * CGFloat(eased)
+            if linear >= 1 {
+                self.sectionExpansionProgress = target
+                timer.invalidate()
+                self.sectionAnimationTimer = nil
+            }
+        }
+        sectionAnimationTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 

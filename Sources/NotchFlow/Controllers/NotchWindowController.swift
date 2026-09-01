@@ -11,6 +11,10 @@ final class NotchWindowController: NSWindowController {
     private var cancellables = Set<AnyCancellable>()
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
+    private var localScrollMonitor: Any?
+    private var isTrackingOpenNotchSwipe = false
+    private var openNotchSwipeX: CGFloat = 0
+    private var openNotchSwipeY: CGFloat = 0
     private var hardwareKeyMonitor: HardwareKeyMonitor?
 
     init(homeApps: [any NotchApp] = [NowPlayingNotchApp()]) {
@@ -44,6 +48,7 @@ final class NotchWindowController: NSWindowController {
         panel.orderFrontRegardless()
         startHoverTracking()
         startOutsideClickTracking()
+        startSwipeTracking()
         hardwareKeyMonitor = HardwareKeyMonitor(
             onBrightnessChanged: { [weak self] level in
                 guard let self else { return }
@@ -91,6 +96,7 @@ final class NotchWindowController: NSWindowController {
         collapseWorkItem?.cancel()
         if let globalClickMonitor { NSEvent.removeMonitor(globalClickMonitor) }
         if let localClickMonitor { NSEvent.removeMonitor(localClickMonitor) }
+        if let localScrollMonitor { NSEvent.removeMonitor(localScrollMonitor) }
     }
 
     private func position(_ panel: NSWindow, size: NSSize) {
@@ -172,6 +178,61 @@ final class NotchWindowController: NSWindowController {
             }
             return event
         }
+    }
+
+    private func startSwipeTracking() {
+        localScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            return self.handleOpenNotchSwipe(event)
+        }
+    }
+
+    private func handleOpenNotchSwipe(_ event: NSEvent) -> NSEvent? {
+        guard presentation.isAppOpen,
+              event.window === window,
+              event.hasPreciseScrollingDeltas,
+              event.momentumPhase.isEmpty else {
+            resetOpenNotchSwipe()
+            return event
+        }
+
+        if event.phase.contains(.began) {
+            resetOpenNotchSwipe()
+            guard let contentView = window?.contentView else { return event }
+            let notchFrame = NSRect(
+                x: contentView.bounds.midX - presentation.currentWidth / 2,
+                y: contentView.bounds.maxY - presentation.currentHeight,
+                width: presentation.currentWidth,
+                height: presentation.currentHeight
+            )
+            isTrackingOpenNotchSwipe = notchFrame.contains(event.locationInWindow)
+        }
+
+        guard isTrackingOpenNotchSwipe else { return event }
+
+        // Remove the user's natural-scrolling preference so this represents
+        // the physical direction of the two fingers on the trackpad.
+        let directionMultiplier: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+        openNotchSwipeX += event.scrollingDeltaX * directionMultiplier
+        openNotchSwipeY += event.scrollingDeltaY * directionMultiplier
+
+        let isClearlyUpward = openNotchSwipeY >= 48 && openNotchSwipeY > abs(openNotchSwipeX) * 1.25
+        if isClearlyUpward {
+            resetOpenNotchSwipe()
+            presentation.setAppOpen(false)
+            return nil
+        }
+
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            resetOpenNotchSwipe()
+        }
+        return event
+    }
+
+    private func resetOpenNotchSwipe() {
+        isTrackingOpenNotchSwipe = false
+        openNotchSwipeX = 0
+        openNotchSwipeY = 0
     }
 
     private func setPointerInside(_ inside: Bool) {

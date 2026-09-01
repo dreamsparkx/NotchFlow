@@ -169,6 +169,11 @@ final class NowPlayingNotchAppView: NotchAppView {
             }
             .store(in: &cancellables)
 
+        presentation.$sectionExpansionProgress
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.needsLayout = true }
+            .store(in: &cancellables)
+
         Publishers.CombineLatest(presentation.$systemHUDProgress, presentation.$systemHUDLevel)
             .receive(on: RunLoop.main)
             .sink { [weak self] progress, level in

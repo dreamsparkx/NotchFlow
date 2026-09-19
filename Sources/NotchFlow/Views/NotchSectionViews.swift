@@ -54,6 +54,11 @@ final class NotchHostView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func showNowPlaying() {
+        (notchContentView as? NotchHomeView)?.selectApp(identifier: "now-playing")
+        selectSection(.home)
+    }
+
     override func layout() {
         super.layout()
         notchContentView.frame = bounds

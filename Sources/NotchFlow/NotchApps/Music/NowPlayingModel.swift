@@ -30,12 +30,16 @@ final class NowPlayingModel: ObservableObject {
 
     private let pollingQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.now-playing", qos: .utility)
     private let commandQueue = DispatchQueue(label: "com.dreamsparkx.NotchFlow.commands", qos: .userInitiated)
+    private let refreshLock = NSLock()
     private var timer: DispatchSourceTimer?
+    private var refreshGeneration = 0
     private var currentArtworkKey: String?
     private var pendingArtworkKey: String?
     private var activePlayer: Player?
     private var pendingShuffleState: Bool?
     private var isStartingDefaultPlayer = false
+    private var usesSystemMediaControls = false
+    private var sourceSelectionObserver: NSObjectProtocol?
     private let systemPlaybackQuality = SystemPlaybackQualityProvider()
 
     private enum Player: String {
@@ -44,6 +48,13 @@ final class NowPlayingModel: ObservableObject {
     }
 
     init() {
+        sourceSelectionObserver = NotificationCenter.default.addObserver(
+            forName: .notchFlowAudioSourceSelectionDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAsync()
+        }
         refreshAsync()
         let timer = DispatchSource.makeTimerSource(queue: pollingQueue)
         timer.schedule(deadline: .now() + 1.5, repeating: 1.5, leeway: .milliseconds(100))
@@ -52,36 +63,118 @@ final class NowPlayingModel: ObservableObject {
         self.timer = timer
     }
 
-    deinit { timer?.cancel() }
+    deinit {
+        timer?.cancel()
+        if let sourceSelectionObserver {
+            NotificationCenter.default.removeObserver(sourceSelectionObserver)
+        }
+    }
 
     private func refreshAsync() {
         pollingQueue.async { [weak self] in self?.refreshInBackground() }
     }
 
     private func refreshInBackground() {
+        let generation = nextRefreshGeneration()
+        if let preferredSource = AudioSourceSelection.shared.source {
+            if preferredSource.bundleIdentifier == "com.spotify.client" {
+                let spotify = isRunning("com.spotify.client") ? spotifyState() : nil
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isCurrentRefresh(generation) else { return }
+                    if let spotify { self.applySpotify(spotify) } else { self.clearPlayback() }
+                }
+                return
+            }
+            if preferredSource.bundleIdentifier == "com.apple.Music" {
+                let music = isRunning("com.apple.Music") ? musicState() : nil
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isCurrentRefresh(generation) else { return }
+                    if let music { self.applyMusic(music) } else { self.clearPlayback() }
+                }
+                return
+            }
+
+            let sourceIsRunning = NSRunningApplication(processIdentifier: preferredSource.processID) != nil
+                || preferredSource.bundleIdentifier.map(isRunning) == true
+            if sourceIsRunning {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isCurrentRefresh(generation) else { return }
+                    self.applyExternalSource(preferredSource)
+                }
+                return
+            }
+
+            AudioSourceSelection.shared.selectAutomatic()
+        }
+
         let spotify = isRunning("com.spotify.client") ? spotifyState() : nil
-        if let spotify, spotify.isPlaying {
-            DispatchQueue.main.async { [weak self] in self?.applySpotify(spotify) }
-            return
-        }
-
         let music = isRunning("com.apple.Music") ? musicState() : nil
+
+        // Scriptable players expose an authoritative live playback state.
+        // Prefer an actively playing one before consulting MediaRemote, whose
+        // current-client value can remain on a previously active browser even
+        // after macOS has routed the media keys to Music or Spotify.
         if let music, music.isPlaying {
-            DispatchQueue.main.async { [weak self] in self?.applyMusic(music) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.isCurrentRefresh(generation),
+                      AudioSourceSelection.shared.isAutomatic else { return }
+                self.applyMusic(music)
+            }
+            return
+        }
+        if let spotify, spotify.isPlaying {
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.isCurrentRefresh(generation),
+                      AudioSourceSelection.shared.isAutomatic else { return }
+                self.applySpotify(spotify)
+            }
             return
         }
 
-        // Preserve the most recently selected player's metadata when paused.
-        if let spotify {
-            DispatchQueue.main.async { [weak self] in self?.applySpotify(spotify) }
-            return
-        }
-        if let music {
-            DispatchQueue.main.async { [weak self] in self?.applyMusic(music) }
-            return
-        }
+        AudioSourceService.automaticSource { [weak self] source in
+            guard let self,
+                  self.isCurrentRefresh(generation),
+                  AudioSourceSelection.shared.isAutomatic else { return }
 
-        DispatchQueue.main.async { [weak self] in self?.clearPlayback() }
+            switch source?.bundleIdentifier {
+            case "com.spotify.client" where spotify != nil:
+                self.applySpotify(spotify!)
+            case "com.apple.Music" where music != nil:
+                self.applyMusic(music!)
+            case .some:
+                self.applyExternalSource(source!)
+            default:
+                // If MediaRemote cannot identify the current client, preserve
+                // the app that owns the media-key target. An audible browser
+                // must not replace paused Music while Play still routes there.
+                if self.activePlayer == .music, let music {
+                    self.applyMusic(music)
+                } else if self.activePlayer == .spotify, let spotify {
+                    self.applySpotify(spotify)
+                } else if let audibleSource = AudioSourceService.currentlyAudibleSource() {
+                    self.applyExternalSource(audibleSource)
+                } else if let spotify {
+                    self.applySpotify(spotify)
+                } else if let music {
+                    self.applyMusic(music)
+                } else {
+                    self.clearPlayback()
+                }
+            }
+        }
+    }
+
+    private func nextRefreshGeneration() -> Int {
+        refreshLock.withLock {
+            refreshGeneration += 1
+            return refreshGeneration
+        }
+    }
+
+    private func isCurrentRefresh(_ generation: Int) -> Bool {
+        refreshLock.withLock { refreshGeneration == generation }
     }
 
     private func clearPlayback() {
@@ -98,10 +191,16 @@ final class NowPlayingModel: ObservableObject {
         activePlayer = nil
         currentArtworkKey = nil
         pendingArtworkKey = nil
+        usesSystemMediaControls = false
     }
 
     func togglePlayback() {
         guard !isStartingDefaultPlayer else { return }
+        if usesSystemMediaControls {
+            isPlaying.toggle()
+            sendMediaKey(16)
+            return
+        }
         guard let activePlayer else {
             startAppleMusicPlayback()
             return
@@ -151,11 +250,19 @@ final class NowPlayingModel: ObservableObject {
     }
 
     func previousTrack() {
+        if usesSystemMediaControls {
+            sendMediaKey(18)
+            return
+        }
         guard let activePlayer else { return }
         runCommand("tell application \"\(activePlayer.rawValue)\" to previous track", refreshAfter: true)
     }
 
     func nextTrack() {
+        if usesSystemMediaControls {
+            sendMediaKey(17)
+            return
+        }
         guard let activePlayer else { return }
         runCommand("tell application \"\(activePlayer.rawValue)\" to next track", refreshAfter: true)
     }
@@ -215,6 +322,7 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private func applySpotify(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, artworkURL: String, elapsed: Double, duration: Double)) {
+        usesSystemMediaControls = false
         isPlaying = state.isPlaying
         applyShuffleState(state.isShuffleEnabled)
         hasTrack = true
@@ -279,6 +387,7 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private func applyMusic(_ state: (isPlaying: Bool, isShuffleEnabled: Bool, key: String, title: String, artist: String, elapsed: Double, duration: Double, quality: PlaybackQuality?)) {
+        usesSystemMediaControls = false
         isPlaying = state.isPlaying
         applyShuffleState(state.isShuffleEnabled)
         hasTrack = true
@@ -304,6 +413,56 @@ final class NowPlayingModel: ObservableObject {
         currentArtworkKey = state.key
         artwork = image
         accentColor = Self.dominantAccent(from: image)
+    }
+
+    private func applyExternalSource(_ source: ActiveAudioSource) {
+        let sourceKey = source.bundleIdentifier ?? "pid:\(source.processID)"
+        let isSameExternalSource = usesSystemMediaControls && currentArtworkKey == sourceKey
+        usesSystemMediaControls = true
+        activePlayer = nil
+        if !isSameExternalSource {
+            isPlaying = true
+        }
+        isShuffleEnabled = false
+        hasTrack = true
+        title = source.name
+        artist = "Audio Source"
+        elapsed = 0
+        duration = 0
+        playbackQuality = nil
+        artwork = source.icon
+        accentColor = source.icon.map(Self.dominantAccent(from:)) ?? Self.fallbackAccent
+        currentArtworkKey = sourceKey
+        pendingArtworkKey = nil
+    }
+
+    private func sendMediaKey(_ keyCode: Int) {
+        let keyDownData = (keyCode << 16) | (0xA << 8)
+        let keyUpData = (keyCode << 16) | (0xB << 8)
+        let keyDown = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: keyDownData,
+            data2: -1
+        )
+        let keyUp = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: keyUpData,
+            data2: -1
+        )
+        keyDown?.cgEvent?.post(tap: .cghidEventTap)
+        keyUp?.cgEvent?.post(tap: .cghidEventTap)
     }
 
     private func runScript(_ source: String) -> NSAppleEventDescriptor? {

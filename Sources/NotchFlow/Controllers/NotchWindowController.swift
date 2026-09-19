@@ -8,6 +8,7 @@ final class NotchWindowController: NSWindowController {
     private var collapseWorkItem: DispatchWorkItem?
     private var pointerIsInside = false
     private var notchContentView: NotchAppView!
+    private var notchHostView: NotchHostView!
     private var cancellables = Set<AnyCancellable>()
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
@@ -37,10 +38,12 @@ final class NotchWindowController: NSWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let contentView = NotchHomeView(apps: homeApps, presentation: presentation)
         notchContentView = contentView
-        panel.contentView = NotchHostView(
+        let hostView = NotchHostView(
             notchContentView: contentView,
             presentation: presentation
         )
+        notchHostView = hostView
+        panel.contentView = hostView
 
         super.init(window: panel)
         updateCompactMetrics()
@@ -90,6 +93,12 @@ final class NotchWindowController: NSWindowController {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func showNowPlaying() {
+        notchHostView.showNowPlaying()
+        presentation.setAppOpen(true)
+        window?.orderFrontRegardless()
+    }
 
     deinit {
         hoverTimer?.invalidate()
